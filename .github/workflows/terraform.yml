@@ -11,39 +11,53 @@ jobs:
     name: "Terraform"
     runs-on: ubuntu-latest
     steps:
+      # check outs the current TF configuration code
       - name: Checkout
         uses: actions/checkout@v3
-
+      # retrieves the Terraform CLI used in this workflow
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v1
         with:
-          # terraform_version: 0.13.0:
+          # optionally change version
+          # terraform_version: 0.13.0
+          # loads the TF_API_TOKEN secret as an environment variable, enabling the Terraform CLI to authenticate to Terraform Cloud
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-
+      # checks whether the configuration has been properly formatted.
       - name: Terraform Format
         id: fmt
         run: terraform fmt -check
-
+      # initializes the TF configuration
       - name: Terraform Init
         id: init
         run: terraform init
-      
+      # validates the configuration syntax
       - name: Terraform Validate
         id: validate
         run: terraform validate -no-color
-
+      #  generates a Terraform plan - triggers a remote plan in Terraform Cloudß
       - name: Terraform Plan
         id: plan
+        # This step only runs on pull requests. The PR generates a plan. When the PR is merged, that plan will be applied.
         if: github.event_name == 'pull_request'
         run: terraform plan -no-color -input=false
+        # This step will continue even when it errors. This allows the next step to display the plan error message even if this step fails
         continue-on-error: true
 
-      - uses: actions/github-script@v6
+      # adds a comment to the pull request with the results of the format, init and plan steps
+      # This allows your team to review the results of the plan directly in the GitHub PR instead of opening Terraform Cloud.
+      - name: Update Pull Request
+        uses: actions/github-script@v6
+        # This step only runs on pull requests.
         if: github.event_name == 'pull_request'
+        # environment variable set to TF plan step outputs/log from line 38
         env:
           PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+           # create output constant from the fmt, init, validate & plan step outcomes (success or failure)
+           # show the TF plan output
+           # create a comment in the issue with output constant - using Rest API - https://docs.github.com/en/rest/issues/comments#create-an-issue-comment
+          
           script: |
             const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
             #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
@@ -66,11 +80,12 @@ jobs:
               repo: context.repo.repo,
               body: output
             })
-
+      # returns whether a plan was successfully generated or not.
+      # This step highlights whenever a plan fails because the "Terraform Plan" step line 38 continues on error.
       - name: Terraform Plan Status
         if: steps.plan.outcome == 'failure'
         run: exit 1
-
+      # applies the configuration. This step will only run when a commit is pushed to main.
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: terraform apply -auto-approve -input=false
